@@ -14,6 +14,8 @@ let package = Package(
         .target(name: "DetourUI", dependencies: ["DetourKit"]),
         // The menu bar app.
         .executableTarget(name: "MacDetour", dependencies: ["DetourUI"]),
+        // Renders the panel and the social card to PNG: `swift run RenderScreenshots <out-dir>`.
+        .executableTarget(name: "RenderScreenshots", dependencies: ["DetourUI", "DetourKit"]),
         // Self-checking test runner (XCTest isn't available with Command Line Tools alone).
         .executableTarget(name: "KitChecks", dependencies: ["DetourKit"], path: "Sources/KitChecks"),
     ]

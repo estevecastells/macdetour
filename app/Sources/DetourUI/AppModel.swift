@@ -34,6 +34,13 @@ public final class AppModel {
         start()
     }
 
+    /// A static model for screenshots: no daemon, no polling, no login item.
+    public init(previewStatus: Status) {
+        status = previewStatus
+        connection = .connected
+        openAtLogin = true
+    }
+
     public func start() {
         pollTask?.cancel()
         pollTask = Task { [weak self] in

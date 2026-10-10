@@ -4,6 +4,13 @@ A menu bar switch that sends only the addresses LaLiga blocks in Spain through
 an SSH tunnel to your own server. Everything else keeps using your normal
 connection, untouched.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/panel-dark.png">
+    <img src="docs/images/panel-light.png" alt="MacDetour menu bar panel: tunnel connected, 278 blocked addresses detoured" width="300">
+  </picture>
+</p>
+
 ## How it works
 
 ```
@@ -70,6 +77,11 @@ Config: `/Library/Application Support/MacDetour/config.toml`. Log: `/var/log/mac
 make uninstall                     # keeps the key and config
 sudo scripts/uninstall.sh --purge  # also deletes them and prints the key to remove from the server
 ```
+
+## Screenshots
+
+`cd app && swift run RenderScreenshots ../docs/images` renders the panel (light
+and dark) and a 1600×900 social card from sample data with the app's real views.
 
 ## Tests
 
