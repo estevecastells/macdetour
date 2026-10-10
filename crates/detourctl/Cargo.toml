@@ -1,0 +1,11 @@
+[package]
+name = "detourctl"
+description = "MacDetour command line: switch the detour on and off and show its status."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+detour-core.workspace = true
+serde_json.workspace = true

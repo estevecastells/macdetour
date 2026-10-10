@@ -1,0 +1,12 @@
+{
+  "type": "status",
+  "status": {
+    "enabled": true,
+    "phase": "active",
+    "tunnel": {"connected": true, "connected_since": 1760112000, "reconnects": 1, "server": "tunnel@93.184.216.34"},
+    "routes": {"interface": "utun7", "ipv4": 2, "ipv6": 0, "sample": ["188.114.96.5", "188.114.97.5"]},
+    "list": {"fetched_at": 1760112030, "listed": 263, "reachable": 120, "unsupported": 141, "refreshing": false},
+    "primary_interface": "en0",
+    "last_error": null
+  }
+}

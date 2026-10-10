@@ -1,0 +1,6 @@
+[
+  {"type": "ping"},
+  {"type": "status"},
+  {"type": "set_enabled", "enabled": true},
+  {"type": "refresh"}
+]

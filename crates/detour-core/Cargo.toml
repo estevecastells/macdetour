@@ -1,0 +1,12 @@
+[package]
+name = "detour-core"
+description = "MacDetour logic with no OS calls: config, blocklist parsing, route planning and the wire protocol."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true

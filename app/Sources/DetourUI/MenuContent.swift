@@ -1,0 +1,118 @@
+import AppKit
+import DetourKit
+import SwiftUI
+
+public struct MenuBarLabel: View {
+    let status: Status?
+    let connection: Connection
+
+    public init(status: Status?, connection: Connection) {
+        self.status = status
+        self.connection = connection
+    }
+
+    public var body: some View {
+        Image(systemName: icon)
+    }
+
+    private var icon: String {
+        guard connection == .connected, let status else { return "exclamationmark.triangle" }
+        switch status.phase {
+        case .off: return "arrow.triangle.branch"
+        case .active: return "arrow.triangle.turn.up.right.circle.fill"
+        case .connecting, .reconnecting: return "arrow.triangle.2.circlepath"
+        }
+    }
+}
+
+@MainActor
+public struct MenuContent: View {
+    @Bindable var model: AppModel
+
+    public init(model: AppModel) {
+        self.model = model
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            header
+            Divider()
+            switch model.connection {
+            case .missing:
+                Text("El servicio no está instalado o no está en marcha.\nInstálalo con `make install` desde el repositorio.")
+                    .font(.callout).foregroundStyle(.secondary)
+            case let .failed(message):
+                Text(message).font(.callout).foregroundStyle(.red)
+            case .connecting:
+                ProgressView().controlSize(.small)
+            case .connected:
+                if let status = model.status { details(status) }
+            }
+            if let error = model.actionError {
+                Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            }
+            Divider()
+            Toggle("Abrir al iniciar sesión", isOn: Binding(get: { model.openAtLogin }, set: { model.setOpenAtLogin($0) }))
+                .toggleStyle(.checkbox)
+            HStack {
+                Spacer()
+                Button("Salir") { NSApplication.shared.terminate(nil) }
+            }
+        }
+        .padding(14)
+        .frame(width: 300)
+    }
+
+    private var header: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("MacDetour").font(.headline)
+                Text(Describe.phase(model.status)).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Toggle("", isOn: Binding(get: { model.isOn }, set: { model.setEnabled($0) }))
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .disabled(model.connection != .connected || model.busy)
+        }
+    }
+
+    @ViewBuilder
+    private func details(_ s: Status) -> some View {
+        if s.enabled {
+            row("Túnel", s.tunnel.connected ? "Conectado" : "Sin conexión", ok: s.tunnel.connected)
+            row("Desvío", Describe.routes(s.routes), ok: nil)
+            if !s.routes.sample.isEmpty {
+                Text(s.routes.sample.joined(separator: ", "))
+                    .font(.caption2.monospaced()).foregroundStyle(.secondary).lineLimit(2)
+            }
+            row(
+                "Lista",
+                s.list.refreshing ? "Comprobando…" : "\(s.list.listed) bloqueadas, \(Describe.ago(s.list.fetchedAt))",
+                ok: nil)
+            if let iface = s.primaryInterface { row("Red", iface, ok: nil) }
+            HStack {
+                Spacer()
+                Button("Comprobar ahora") { model.refreshList() }.disabled(s.list.refreshing)
+            }
+        } else {
+            Text("Actívalo para desviar por \(s.tunnel.server) solo las IPs que LaLiga bloquea en tu red. El resto de tu tráfico no cambia.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        if let error = s.lastError {
+            Text(error).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func row(_ label: String, _ value: String, ok: Bool?) -> some View {
+        HStack {
+            Text(label).foregroundStyle(.secondary)
+            Spacer()
+            if let ok {
+                Circle().fill(ok ? Color.green : Color.orange).frame(width: 7, height: 7)
+            }
+            Text(value).monospacedDigit()
+        }
+        .font(.callout)
+    }
+}

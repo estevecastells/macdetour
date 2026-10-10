@@ -1,0 +1,12 @@
+{
+  "type": "status",
+  "status": {
+    "enabled": false,
+    "phase": "off",
+    "tunnel": {"connected": false, "connected_since": null, "reconnects": 0, "server": "tunnel@93.184.216.34"},
+    "routes": {"interface": null, "ipv4": 0, "ipv6": 0, "sample": []},
+    "list": {"fetched_at": null, "listed": 0, "reachable": 0, "unsupported": 0, "refreshing": false},
+    "primary_interface": null,
+    "last_error": "Tunnel error: Permission denied (publickey)."
+  }
+}

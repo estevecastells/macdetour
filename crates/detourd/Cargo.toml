@@ -1,0 +1,29 @@
+[package]
+name = "detourd"
+description = "MacDetour daemon: runs as root, owns the SSH tunnel, the utun interface and the detour routes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "detourd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "detourd"
+path = "src/main.rs"
+
+[dependencies]
+detour-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "net", "time", "process", "sync", "signal", "io-util"] }
+tun2proxy = { version = "0.8.4", default-features = false }
+tun = { version = "0.8.14", features = ["async"] }
+socket2 = { version = "0.6", features = ["all"] }
+log = "0.4"
+
+[dev-dependencies]
+tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "test-util"] }
