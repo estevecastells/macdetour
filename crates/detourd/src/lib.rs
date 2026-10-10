@@ -9,3 +9,4 @@ pub mod probe;
 pub mod server;
 pub mod system;
 pub mod tunnel;
+pub mod watch;

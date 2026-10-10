@@ -19,7 +19,9 @@ fn arg(args: &[String], name: &str, default: &str) -> PathBuf {
         .unwrap_or_else(|| default.into())
 }
 
-#[tokio::main]
+// Two workers are plenty: the daemon is idle almost all the time, and every
+// extra worker is another thread to wake and another stack to keep.
+#[tokio::main(worker_threads = 2)]
 async fn main() {
     detourd::logger::init();
     let args: Vec<String> = std::env::args().collect();
@@ -36,7 +38,11 @@ async fn main() {
         }
     };
     let allowed = cfg.allowed_uids.clone();
-    let (engine, handle, rx) = Engine::new(cfg, MacPlatform, Some(state_path)).handle_pair();
+    let mut engine = Engine::new(cfg, MacPlatform, Some(state_path));
+    if let Some(events) = detourd::watch::spawn() {
+        engine = engine.with_network_events(events);
+    }
+    let (engine, handle, rx) = engine.handle_pair();
     if let Err(e) = detourd::server::spawn(handle, &socket_path, allowed) {
         log::error!("cannot listen on {}: {e}", socket_path.display());
         std::process::exit(1);

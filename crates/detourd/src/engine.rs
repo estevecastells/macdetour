@@ -24,6 +24,10 @@ use tokio::time::Instant;
 
 pub const TICK: Duration = Duration::from_secs(2);
 const RETRY_AFTER_FAILURE: Duration = Duration::from_secs(60);
+/// Wait for routing events to settle before reading the default route again.
+const NETWORK_DEBOUNCE: Duration = Duration::from_millis(500);
+/// Re-read the default route at least this often, in case an event was missed.
+const NETWORK_FALLBACK: Duration = Duration::from_secs(60);
 const SAMPLE_SIZE: usize = 6;
 
 /// Listed destinations with their direct-probe result (`None` when unverified).
@@ -34,6 +38,10 @@ pub type Candidates = Vec<(Cidr, Option<Probe>)>;
 pub trait TunGuard: Send {
     fn name(&self) -> &str;
     fn alive(&self) -> bool;
+    /// Interface index, used to ignore routing events about our own routes.
+    fn index(&self) -> Option<u16> {
+        None
+    }
 }
 
 pub trait TunnelCtl: Send {
@@ -134,6 +142,10 @@ pub struct Engine<P: Platform> {
     last_error: Option<String>,
     refresh_tx: mpsc::Sender<RefreshResult>,
     refresh_rx: mpsc::Receiver<RefreshResult>,
+    /// Kernel routing events (interface index). Without them, every tick polls.
+    net_events: Option<mpsc::Receiver<u16>>,
+    net_check_due: Option<Instant>,
+    last_net_check: Option<Instant>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]
@@ -155,6 +167,39 @@ impl<P: Platform> Engine<P> {
             last_error: None,
             refresh_tx,
             refresh_rx,
+            net_events: None,
+            net_check_due: None,
+            last_net_check: None,
+        }
+    }
+
+    /// Read the default route only after routing events instead of on every tick.
+    pub fn with_network_events(mut self, events: mpsc::Receiver<u16>) -> Self {
+        self.net_events = Some(events);
+        self
+    }
+
+    fn note_network_event(&mut self, index: u16) {
+        // Our own detour routes generate an event each; they never move the default route.
+        if self.active.as_ref().and_then(|a| a.tun.index()) == Some(index) {
+            return;
+        }
+        self.net_check_due.get_or_insert_with(|| Instant::now() + NETWORK_DEBOUNCE);
+    }
+
+    fn network_check_due(&self) -> bool {
+        if self.net_events.is_none() {
+            return true;
+        }
+        let now = Instant::now();
+        self.net_check_due.is_some_and(|due| now >= due)
+            || self.last_net_check.is_none_or(|last| now >= last + NETWORK_FALLBACK)
+    }
+
+    async fn next_network_event(events: &mut Option<mpsc::Receiver<u16>>) -> Option<u16> {
+        match events.as_mut() {
+            Some(rx) => rx.recv().await,
+            None => std::future::pending().await,
         }
     }
 
@@ -328,16 +373,29 @@ impl<P: Platform> Engine<P> {
     }
 
     pub async fn tick(&mut self) {
-        let network = self.platform.network();
-        let changed = network != self.network;
-        if changed {
-            log::info!(
-                "network changed: {:?} -> {:?}",
-                self.network.ipv4.interface.as_deref(),
-                network.ipv4.interface.as_deref()
-            );
-            self.network = network;
+        let mut changed = false;
+        if self.network_check_due() {
+            self.net_check_due = None;
+            self.last_net_check = Some(Instant::now());
+            let network = self.platform.network();
+            changed = network != self.network;
+            if changed {
+                self.note_network_change(network);
+            }
         }
+        self.tick_active(changed).await;
+    }
+
+    fn note_network_change(&mut self, network: Network) {
+        log::info!(
+            "network changed: {:?} -> {:?}",
+            self.network.ipv4.interface.as_deref(),
+            network.ipv4.interface.as_deref()
+        );
+        self.network = network;
+    }
+
+    async fn tick_active(&mut self, changed: bool) {
         let tun_dead = self.active.as_ref().is_some_and(|a| !a.tun.alive());
         if tun_dead {
             log::warn!("tunnel interface stopped; recreating it");
@@ -453,6 +511,7 @@ impl<P: Platform> Engine<P> {
                     None => break,
                 },
                 Some(result) = self.refresh_rx.recv() => self.apply_refresh(result),
+                Some(index) = Self::next_network_event(&mut self.net_events) => self.note_network_event(index),
                 _ = ticker.tick() => self.tick().await,
                 _ = &mut shutdown => break,
             }

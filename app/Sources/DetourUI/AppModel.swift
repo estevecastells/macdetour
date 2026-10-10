@@ -22,9 +22,12 @@ public final class AppModel {
 
     private let client = DaemonClient()
     private var pollTask: Task<Void, Never>?
+    private var panelOpen = false
 
-    /// A status call is a single local socket round-trip.
-    static let pollInterval: Duration = .seconds(2)
+    /// While the panel is open the numbers should feel live.
+    static let openPollInterval: Duration = .seconds(2)
+    /// While closed only the menu bar icon is visible, and it changes rarely.
+    static let closedPollInterval: Duration = .seconds(15)
 
     public init() {
         configureLoginItemOnFirstLaunch()
@@ -35,22 +38,44 @@ public final class AppModel {
         pollTask?.cancel()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.refresh()
-                try? await Task.sleep(for: AppModel.pollInterval)
+                guard let self else { return }
+                await self.refresh()
+                let interval = self.panelOpen ? AppModel.openPollInterval : AppModel.closedPollInterval
+                try? await Task.sleep(for: interval)
             }
         }
     }
 
+    /// Refresh at once when the panel opens, then keep the faster pace.
+    func panelDidOpen() {
+        panelOpen = true
+        start()
+    }
+
+    func panelDidClose() {
+        panelOpen = false
+    }
+
     func refresh() async {
         do {
-            status = try await client.status()
-            connection = .connected
+            apply(try await client.status())
+            setConnection(.connected)
         } catch DaemonError.notRunning {
-            status = nil
-            connection = .missing
+            apply(nil)
+            setConnection(.missing)
         } catch {
-            connection = .failed(error.localizedDescription)
+            setConnection(.failed(error.localizedDescription))
         }
+    }
+
+    /// Observation invalidates views on every assignment, even of an equal
+    /// value, so only publish real changes. Most polls change nothing.
+    private func apply(_ new: Status?) {
+        if new != status { status = new }
+    }
+
+    private func setConnection(_ new: Connection) {
+        if new != connection { connection = new }
     }
 
     public var isOn: Bool { status?.enabled ?? false }
@@ -61,7 +86,7 @@ public final class AppModel {
         Task {
             defer { busy = false }
             do {
-                status = try await client.setEnabled(on)
+                apply(try await client.setEnabled(on))
                 actionError = nil
             } catch {
                 actionError = error.localizedDescription
@@ -72,7 +97,7 @@ public final class AppModel {
     func refreshList() {
         Task {
             do {
-                status = try await client.refreshList()
+                apply(try await client.refreshList())
                 actionError = nil
             } catch {
                 actionError = error.localizedDescription

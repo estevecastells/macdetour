@@ -26,6 +26,7 @@ pub struct MacPlatform;
 
 pub struct MacTun {
     name: String,
+    index: Option<u16>,
     token: CancellationToken,
     alive: Arc<AtomicBool>,
 }
@@ -37,6 +38,10 @@ impl TunGuard for MacTun {
 
     fn alive(&self) -> bool {
         self.alive.load(Ordering::SeqCst)
+    }
+
+    fn index(&self) -> Option<u16> {
+        self.index
     }
 }
 
@@ -107,7 +112,8 @@ impl Platform for MacPlatform {
             }
             task_alive.store(false, Ordering::SeqCst);
         });
-        Ok(MacTun { name, token, alive })
+        let index = system::interface_index(&name).and_then(|i| u16::try_from(i.get()).ok());
+        Ok(MacTun { name, index, token, alive })
     }
 
     fn tunnel(&self, cfg: &Config) -> Tunnel {
@@ -143,10 +149,7 @@ impl Platform for MacPlatform {
         // A probe that cannot even reach the tunnel server means there is no
         // working direct network; its results would mark everything blocked.
         if let Some(control) = control {
-            let ok = tokio::task::spawn_blocking(move || probe::probe_one(control, egress, timeout))
-                .await
-                .unwrap_or(Probe::Blocked);
-            if ok != Probe::Reachable {
+            if probe::probe_one(control, egress, timeout).await != Probe::Reachable {
                 return None;
             }
         }

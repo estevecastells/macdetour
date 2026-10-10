@@ -61,6 +61,8 @@ public struct MenuContent: View {
         }
         .padding(14)
         .frame(width: 300)
+        .onAppear { model.panelDidOpen() }
+        .onDisappear { model.panelDidClose() }
     }
 
     private var header: some View {
@@ -86,10 +88,15 @@ public struct MenuContent: View {
                 Text(s.routes.sample.joined(separator: ", "))
                     .font(.caption2.monospaced()).foregroundStyle(.secondary).lineLimit(2)
             }
-            row(
-                "Lista",
-                s.list.refreshing ? "Comprobando…" : "\(s.list.listed) bloqueadas, \(Describe.ago(s.list.fetchedAt))",
-                ok: nil)
+            // The age text ticks on its own; the status itself rarely changes.
+            TimelineView(.periodic(from: .now, by: 5)) { context in
+                row(
+                    "Lista",
+                    s.list.refreshing
+                        ? "Comprobando…"
+                        : "\(s.list.listed) bloqueadas, \(Describe.ago(s.list.fetchedAt, now: context.date))",
+                    ok: nil)
+            }
             if let iface = s.primaryInterface { row("Red", iface, ok: nil) }
             HStack {
                 Spacer()

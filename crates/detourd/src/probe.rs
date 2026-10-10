@@ -22,23 +22,32 @@ pub struct Egress {
     pub ipv6: Option<NonZeroU32>,
 }
 
-pub fn probe_one(addr: SocketAddr, egress: Egress, timeout: Duration) -> Probe {
+fn bound_socket(addr: SocketAddr, egress: Egress) -> Result<Socket, Probe> {
     let (domain, index) = match addr.ip() {
         IpAddr::V4(_) => (Domain::IPV4, egress.ipv4),
         IpAddr::V6(_) => (Domain::IPV6, egress.ipv6),
     };
-    let Some(index) = index else { return Probe::Unsupported };
-    let Ok(socket) = Socket::new(domain, Type::STREAM, Some(Protocol::TCP)) else { return Probe::Blocked };
+    let index = index.ok_or(Probe::Unsupported)?;
+    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP)).map_err(|_| Probe::Blocked)?;
     let bound = match addr.ip() {
         IpAddr::V4(_) => socket.bind_device_by_index_v4(Some(index)),
         IpAddr::V6(_) => socket.bind_device_by_index_v6(Some(index)),
     };
-    if bound.is_err() {
-        return Probe::Unsupported;
-    }
-    match socket.connect_timeout(&addr.into(), timeout) {
-        Ok(()) => Probe::Reachable,
-        Err(e) if e.raw_os_error() == Some(libc::ENETUNREACH) || e.raw_os_error() == Some(libc::EHOSTUNREACH) => {
+    bound.map_err(|_| Probe::Unsupported)?;
+    socket.set_nonblocking(true).map_err(|_| Probe::Blocked)?;
+    Ok(socket)
+}
+
+/// One non-blocking connect on the runtime: no thread per probe.
+pub async fn probe_one(addr: SocketAddr, egress: Egress, timeout: Duration) -> Probe {
+    let socket = match bound_socket(addr, egress) {
+        Ok(socket) => socket,
+        Err(probe) => return probe,
+    };
+    let socket = tokio::net::TcpSocket::from_std_stream(socket.into());
+    match tokio::time::timeout(timeout, socket.connect(addr)).await {
+        Ok(Ok(_)) => Probe::Reachable,
+        Ok(Err(e)) if matches!(e.raw_os_error(), Some(libc::ENETUNREACH) | Some(libc::EHOSTUNREACH)) => {
             // No route on this network for the family: not a block.
             if addr.is_ipv6() {
                 Probe::Unsupported
@@ -46,12 +55,13 @@ pub fn probe_one(addr: SocketAddr, egress: Egress, timeout: Duration) -> Probe {
                 Probe::Blocked
             }
         }
-        Err(_) => Probe::Blocked,
+        Ok(Err(_)) | Err(_) => Probe::Blocked,
     }
 }
 
-/// Probe every host entry on TCP 443. Networks (non-host entries) cannot be
-/// probed and come back as `None` (detour without verification).
+/// Probe every host entry on TCP 443, at most `PARALLEL_PROBES` at a time.
+/// Networks (non-host entries) cannot be probed and come back as `None`
+/// (detour without verification).
 pub async fn probe_all(entries: Vec<Cidr>, egress: Egress, timeout: Duration) -> Vec<(Cidr, Option<Probe>)> {
     let limit = Arc::new(Semaphore::new(PARALLEL_PROBES));
     let mut tasks = Vec::with_capacity(entries.len());
@@ -62,10 +72,7 @@ pub async fn probe_all(entries: Vec<Cidr>, egress: Egress, timeout: Duration) ->
                 return (cidr, None);
             }
             let Ok(_permit) = limit.acquire_owned().await else { return (cidr, None) };
-            let addr = SocketAddr::new(cidr.addr(), 443);
-            let result =
-                tokio::task::spawn_blocking(move || probe_one(addr, egress, timeout)).await.unwrap_or(Probe::Blocked);
-            (cidr, Some(result))
+            (cidr, Some(probe_one(SocketAddr::new(cidr.addr(), 443), egress, timeout).await))
         }));
     }
     let mut out = Vec::with_capacity(tasks.len());
@@ -87,26 +94,34 @@ mod tests {
         Egress { ipv4: lo, ipv6: lo }
     }
 
-    #[test]
-    fn reachable_when_something_answers() {
+    #[tokio::test]
+    async fn reachable_when_something_answers() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        assert_eq!(probe_one(addr, loopback(), Duration::from_secs(2)), Probe::Reachable);
+        assert_eq!(probe_one(addr, loopback(), Duration::from_secs(2)).await, Probe::Reachable);
     }
 
-    #[test]
-    fn blocked_when_nothing_answers() {
+    #[tokio::test]
+    async fn blocked_when_nothing_answers() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         drop(listener);
-        assert_eq!(probe_one(addr, loopback(), Duration::from_secs(2)), Probe::Blocked);
+        assert_eq!(probe_one(addr, loopback(), Duration::from_secs(2)).await, Probe::Blocked);
     }
 
-    #[test]
-    fn unsupported_without_an_interface_for_the_family() {
+    #[tokio::test]
+    async fn blocked_when_the_connection_hangs() {
+        // A non-routable address never answers, like a silently dropped block.
+        let addr: SocketAddr = "10.255.255.1:443".parse().unwrap();
+        let egress = Egress { ipv4: crate::system::interface_index("lo0"), ipv6: None };
+        assert_eq!(probe_one(addr, egress, Duration::from_millis(300)).await, Probe::Blocked);
+    }
+
+    #[tokio::test]
+    async fn unsupported_without_an_interface_for_the_family() {
         let egress = Egress { ipv4: loopback().ipv4, ipv6: None };
         let addr: SocketAddr = "[2a06:98c1:3120::5]:443".parse().unwrap();
-        assert_eq!(probe_one(addr, egress, Duration::from_secs(1)), Probe::Unsupported);
+        assert_eq!(probe_one(addr, egress, Duration::from_secs(1)).await, Probe::Unsupported);
     }
 
     #[tokio::test]

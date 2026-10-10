@@ -177,6 +177,11 @@ impl Tunnel {
         if self.child.is_none() {
             return false;
         }
+        // Once up, a live ssh process means a live proxy: ssh exits when the
+        // session dies (ServerAlive), so there is no need to dial it every tick.
+        if self.connected_since.is_some() {
+            return true;
+        }
         let up = socks_listening(self.cfg.socks_port).await;
         if up && self.connected_since.is_none() {
             log::info!("tunnel up via {}", self.server());

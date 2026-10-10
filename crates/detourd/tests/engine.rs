@@ -26,6 +26,7 @@ struct World {
     network: Network,
     fail_route: Option<Cidr>,
     fetched_via_socks: Vec<Option<u16>>,
+    network_reads: usize,
 }
 
 #[derive(Clone)]
@@ -50,6 +51,7 @@ impl Fake {
             probes: HashMap::new(),
             fail_route: None,
             fetched_via_socks: Vec::new(),
+            network_reads: 0,
         };
         let fake = Fake(Arc::new(Mutex::new(w)));
         fake.set_probe("188.114.96.5", Probe::Blocked);
@@ -80,6 +82,9 @@ impl TunGuard for FakeTun {
     }
     fn alive(&self) -> bool {
         self.0.load(Ordering::SeqCst)
+    }
+    fn index(&self) -> Option<u16> {
+        Some(9)
     }
 }
 
@@ -139,7 +144,9 @@ impl Platform for Fake {
         Ok(())
     }
     fn network(&self) -> Network {
-        self.w().network.clone()
+        let mut w = self.w();
+        w.network_reads += 1;
+        w.network.clone()
     }
     fn fetch_list(&self, _url: String, socks: Option<u16>) -> impl Future<Output = Result<String, String>> + Send {
         let mut w = self.w();
@@ -342,6 +349,46 @@ async fn a_failed_route_is_reported_and_others_still_install() {
     tokio::time::sleep(Duration::from_secs(5)).await;
     assert_eq!(fake.routes(), vec!["188.114.97.5"]);
     assert!(handle.status().last_error.unwrap().contains("188.114.96.5"));
+    drop(handle);
+    task.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn routing_events_drive_network_checks_instead_of_polling() {
+    let fake = Fake::new();
+    let (events_tx, events_rx) = tokio::sync::mpsc::channel(8);
+    let engine = Engine::new(config(), fake.clone(), None).with_network_events(events_rx);
+    let (engine, handle, rx) = engine.handle_pair();
+    let task = tokio::spawn(engine.run(rx, std::future::pending()));
+    handle.set_enabled(true).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    let reads = fake.w().network_reads;
+
+    // Quiet network: no reads between fallback checks.
+    tokio::time::sleep(Duration::from_secs(20)).await;
+    assert_eq!(fake.w().network_reads, reads, "no polling without events");
+
+    // Events about our own detour routes (utun index 9) are ignored.
+    for _ in 0..50 {
+        events_tx.send(9).await.unwrap();
+    }
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!(fake.w().network_reads, reads, "own routes never trigger a check");
+
+    // A burst of foreign events is debounced into one check that sees the change.
+    fake.w().network.ipv4 = DefaultRoute { interface: Some("en1".into()), gateway: Some("10.0.0.1".into()) };
+    for _ in 0..5 {
+        events_tx.send(4).await.unwrap();
+    }
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(fake.w().network_reads, reads + 1, "one debounced read");
+    assert_eq!(fake.w().tunnel_restarts, 1);
+    assert_eq!(handle.status().primary_interface.as_deref(), Some("en1"));
+
+    // A missed event is still caught by the fallback check.
+    fake.w().network.ipv4 = DefaultRoute { interface: Some("en0".into()), gateway: Some("192.168.1.1".into()) };
+    tokio::time::sleep(Duration::from_secs(62)).await;
+    assert_eq!(handle.status().primary_interface.as_deref(), Some("en0"));
     drop(handle);
     task.await.unwrap();
 }

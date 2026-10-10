@@ -36,8 +36,9 @@ fn fake_engine() -> Handle {
 
 fn ask(path: &PathBuf, line: &str) -> Response {
     let mut stream = UnixStream::connect(path).unwrap();
-    stream.write_all(line.as_bytes()).unwrap();
-    stream.write_all(b"\n").unwrap();
+    // The server may answer and hang up before an oversized request is fully
+    // written, so a failed write is fine as long as the reply arrives.
+    let _ = stream.write_all(line.as_bytes()).and_then(|_| stream.write_all(b"\n"));
     let mut reply = String::new();
     BufReader::new(stream).read_line(&mut reply).unwrap();
     serde_json::from_str(&reply).unwrap()
