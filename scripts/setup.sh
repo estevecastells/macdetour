@@ -13,14 +13,7 @@ cd "$root"
 alias_name="${1:?usage: scripts/setup.sh <ssh-alias>}"
 [[ $EUID -ne 0 ]] || { echo "run setup.sh as your user, not root" >&2; exit 1; }
 
-resolved="$(ssh -G "$alias_name")"
-host_name="$(awk '$1=="hostname"{print $2}' <<<"$resolved")"
-ssh_user="$(awk '$1=="user"{print $2}' <<<"$resolved")"
-ssh_port="$(awk '$1=="port"{print $2}' <<<"$resolved")"
-host_ip="$host_name"
-if ! [[ "$host_ip" =~ ^[0-9A-Fa-f:.]+$ ]]; then
-  host_ip="$(dscacheutil -q host -a name "$host_name" | awk '/ip_address/{print $2; exit}')"
-fi
+read -r host_ip ssh_user ssh_port < <(scripts/resolve-host.sh "$alias_name")
 echo "==> Tunnel server: ${ssh_user}@${host_ip}:${ssh_port} (from alias ${alias_name})"
 
 echo "==> Building"
@@ -32,12 +25,7 @@ sudo scripts/install.sh --bin-dir target/release --host "$host_ip" --user "$ssh_
   --known-hosts "$HOME/.ssh/known_hosts" --allow-uid "$(id -u)"
 
 echo "==> Authorizing the tunnel key on ${alias_name} (forwarding only)"
-pub="$(cat "/Library/Application Support/MacDetour/id_ed25519.pub")"
-key_body="$(cut -d' ' -f2 <<<"$pub")"
-[[ "$key_body" =~ ^[A-Za-z0-9+/=]+$ ]] || { echo "unexpected public key format" >&2; exit 1; }
-entry="restrict,port-forwarding,command=\"/usr/bin/false\" ${pub}"
-ssh "$alias_name" "umask 077 && mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && \
-  (grep -qF '${key_body}' ~/.ssh/authorized_keys || printf '%s\n' '${entry}' >> ~/.ssh/authorized_keys)"
+scripts/authorize-key.sh "$alias_name"
 
 echo "==> Installing MacDetour.app"
 rm -rf /Applications/MacDetour.app

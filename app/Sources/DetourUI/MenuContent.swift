@@ -39,8 +39,7 @@ public struct MenuContent: View {
             Divider()
             switch model.connection {
             case .missing:
-                Text("El servicio no está instalado o no está en marcha.\nInstálalo con `make install` desde el repositorio.")
-                    .font(.callout).foregroundStyle(.secondary)
+                SetupHint()
             case let .failed(message):
                 Text(message).font(.callout).foregroundStyle(.red)
             case .connecting:
@@ -51,16 +50,38 @@ public struct MenuContent: View {
             if let error = model.actionError {
                 Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
+            if model.serviceUpdateAvailable {
+                HStack {
+                    Label("Hay una actualización del servicio", systemImage: "arrow.down.circle.fill").font(.callout)
+                    Spacer()
+                    Button(model.installing ? "Actualizando…" : "Actualizar…") { model.updateService() }
+                        .controlSize(.small)
+                        .disabled(model.installing)
+                        .help("Instala el servicio incluido en esta versión. macOS te pedirá la contraseña.")
+                }
+            }
+            UpdateRow(updates: model.updates)
             Divider()
-            Toggle("Abrir al iniciar sesión", isOn: Binding(get: { model.openAtLogin }, set: { model.setOpenAtLogin($0) }))
-                .toggleStyle(.checkbox)
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Abrir al iniciar sesión", isOn: Binding(get: { model.openAtLogin }, set: { model.setOpenAtLogin($0) }))
+                Toggle("Instalar actualizaciones automáticamente", isOn: Binding(
+                    get: { model.updates.autoInstall }, set: { model.updates.autoInstall = $0 }))
+            }
+            .toggleStyle(.checkbox)
+            .font(.callout)
             HStack {
+                Button("Log") { model.openLog() }
+                Spacer()
+                Button("Buscar actualizaciones") { Task { await model.updates.check(userInitiated: true) } }
+                Spacer()
+                Link("GitHub", destination: URL(string: "https://github.com/\(UpdateConfig.repo)")!)
                 Spacer()
                 Button("Salir") { NSApplication.shared.terminate(nil) }
             }
+            .controlSize(.small)
         }
         .padding(14)
-        .frame(width: 300)
+        .frame(width: 340)
         .onAppear { model.panelDidOpen() }
         .onDisappear { model.panelDidClose() }
     }
@@ -121,5 +142,61 @@ public struct MenuContent: View {
             Text(value).monospacedDigit()
         }
         .font(.callout)
+    }
+}
+
+/// Shown when the service is missing: the one-line installer, ready to copy.
+@MainActor
+private struct SetupHint: View {
+    static let command =
+        "curl -fsSL https://raw.githubusercontent.com/\(UpdateConfig.repo)/main/scripts/get.sh | bash -s -- <tu-alias-ssh>"
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("El servicio de MacDetour no está instalado o no está en marcha. Instálalo desde Terminal con el alias SSH de tu servidor:")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(Self.command)
+                .font(.caption2.monospaced()).textSelection(.enabled)
+                .padding(6).background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            Button(copied ? "Copiado" : "Copiar comando") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(Self.command, forType: .string)
+                copied = true
+            }
+            .controlSize(.small)
+        }
+    }
+}
+
+@MainActor
+private struct UpdateRow: View {
+    let updates: Updates
+
+    var body: some View {
+        switch updates.state {
+        case .idle:
+            EmptyView()
+        case .checking:
+            Label("Buscando actualizaciones…", systemImage: "arrow.triangle.2.circlepath").font(.caption).foregroundStyle(.secondary)
+        case .upToDate:
+            Label("MacDetour \(Updates.currentVersion) está al día", systemImage: "checkmark.circle")
+                .font(.caption).foregroundStyle(.secondary)
+        case let .available(version, notes):
+            HStack {
+                Label("Versión \(version) disponible", systemImage: "arrow.down.circle.fill").font(.callout)
+                Spacer()
+                Link("Novedades", destination: notes).font(.caption)
+                Button("Actualizar") { Task { await updates.install() } }.controlSize(.small)
+            }
+        case let .installing(step):
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(step).font(.caption).foregroundStyle(.secondary)
+            }
+        case let .failed(message):
+            Label(message, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }

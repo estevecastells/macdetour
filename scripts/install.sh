@@ -3,6 +3,10 @@
 #
 #   sudo scripts/install.sh --bin-dir target/release --host 203.0.113.10 --user tunnel [--port 22] \
 #        --known-hosts /Users/me/.ssh/known_hosts --allow-uid 501
+#
+#   sudo scripts/install.sh --upgrade --bin-dir DIR
+#        replace the binaries and restart, keeping the config, key and pinned host key
+#        (what the app runs after it updates itself)
 set -euo pipefail
 
 label="io.github.estevecastells.macdetour"
@@ -11,9 +15,10 @@ libexec="/usr/local/libexec/macdetour"
 plist="/Library/LaunchDaemons/${label}.plist"
 socket="/var/run/macdetour.sock"
 
-bin_dir="" host="" user="" port="22" known_hosts="" allow_uid=""
+bin_dir="" host="" user="" port="22" known_hosts="" allow_uid="" upgrade=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --upgrade) upgrade=1; shift ;;
     --bin-dir) bin_dir="$2"; shift 2 ;;
     --host) host="$2"; shift 2 ;;
     --user) user="$2"; shift 2 ;;
@@ -26,35 +31,42 @@ done
 
 [[ $EUID -eq 0 ]] || { echo "install.sh must run as root" >&2; exit 1; }
 [[ -x "$bin_dir/detourd" && -x "$bin_dir/detourctl" ]] || { echo "missing binaries in $bin_dir" >&2; exit 1; }
-[[ "$host" =~ ^[0-9A-Fa-f:.]+$ ]] || { echo "--host must be an IP address" >&2; exit 1; }
-[[ "$user" =~ ^[A-Za-z0-9._-]+$ && "$user" != -* ]] || { echo "--user is invalid" >&2; exit 1; }
-[[ "$port" =~ ^[0-9]+$ ]] || { echo "--port is invalid" >&2; exit 1; }
-[[ "$allow_uid" =~ ^[0-9]+$ ]] || { echo "--allow-uid is required" >&2; exit 1; }
+if [[ $upgrade -eq 1 ]]; then
+  for f in config.toml known_hosts id_ed25519; do
+    [[ -f "$support/$f" ]] || { echo "nothing to upgrade: $support/$f is missing; run a full install" >&2; exit 1; }
+  done
+else
+  [[ "$host" =~ ^[0-9A-Fa-f:.]+$ ]] || { echo "--host must be an IP address" >&2; exit 1; }
+  [[ "$user" =~ ^[A-Za-z0-9._-]+$ && "$user" != -* ]] || { echo "--user is invalid" >&2; exit 1; }
+  [[ "$port" =~ ^[0-9]+$ ]] || { echo "--port is invalid" >&2; exit 1; }
+  [[ "$allow_uid" =~ ^[0-9]+$ ]] || { echo "--allow-uid is required" >&2; exit 1; }
+fi
 
 echo "==> Installing binaries"
 install -d -m 755 "$libexec" /usr/local/bin
 install -m 755 "$bin_dir/detourd" "$libexec/detourd"
 install -m 755 "$bin_dir/detourctl" /usr/local/bin/detourctl
 
-echo "==> Preparing $support"
-install -d -m 755 "$support"
-if [[ ! -f "$support/id_ed25519" ]]; then
-  ssh-keygen -q -t ed25519 -N "" -C "macdetour@$(scutil --get LocalHostName 2>/dev/null || hostname -s)" \
-    -f "$support/id_ed25519"
-fi
-chmod 600 "$support/id_ed25519"
-chmod 644 "$support/id_ed25519.pub"
+if [[ $upgrade -eq 0 ]]; then
+  echo "==> Preparing $support"
+  install -d -m 755 "$support"
+  if [[ ! -f "$support/id_ed25519" ]]; then
+    ssh-keygen -q -t ed25519 -N "" -C "macdetour@$(scutil --get LocalHostName 2>/dev/null || hostname -s)" \
+      -f "$support/id_ed25519"
+  fi
+  chmod 600 "$support/id_ed25519"
+  chmod 644 "$support/id_ed25519.pub"
 
-# Pin the server key from the user's own known_hosts (never trust on first use here).
-lookup="$host"
-[[ "$port" != "22" ]] && lookup="[$host]:$port"
-pinned="$(ssh-keygen -F "$lookup" -f "$known_hosts" 2>/dev/null | grep -v '^#' || true)"
-[[ -n "$pinned" ]] || { echo "no known_hosts entry for $lookup in $known_hosts; ssh to it once first" >&2; exit 1; }
-printf '%s\n' "$pinned" > "$support/known_hosts"
-chmod 644 "$support/known_hosts"
+  # Pin the server key from the user's own known_hosts (never trust on first use here).
+  lookup="$host"
+  [[ "$port" != "22" ]] && lookup="[$host]:$port"
+  pinned="$(ssh-keygen -F "$lookup" -f "$known_hosts" 2>/dev/null | grep -v '^#' || true)"
+  [[ -n "$pinned" ]] || { echo "no known_hosts entry for $lookup in $known_hosts; ssh to it once first" >&2; exit 1; }
+  printf '%s\n' "$pinned" > "$support/known_hosts"
+  chmod 644 "$support/known_hosts"
 
-if [[ ! -f "$support/config.toml" ]]; then
-  cat > "$support/config.toml" <<TOML
+  if [[ ! -f "$support/config.toml" ]]; then
+    cat > "$support/config.toml" <<TOML
 # MacDetour daemon configuration. Restart after editing:
 #   sudo launchctl kickstart -k system/${label}
 ssh_host = "${host}"
@@ -64,8 +76,10 @@ allowed_uids = [${allow_uid}]
 # Destinations always detoured while on, e.g. ["188.114.96.0/20"].
 extra_routes = []
 TOML
+  fi
+  chmod 644 "$support/config.toml"
+
 fi
-chmod 644 "$support/config.toml"
 
 echo "==> Registering the launchd service"
 cat > "$plist" <<PLIST

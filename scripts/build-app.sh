@@ -6,6 +6,9 @@ cd "$root"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 app="build/MacDetour.app"
 
+echo "==> Building Rust daemon and CLI (release)"
+cargo build --release --locked -p detourd -p detourctl
+
 echo "==> Building Swift menu bar app (release)"
 (cd app && swift build -c release --product MacDetour)
 swift_bin="$(cd app && swift build -c release --show-bin-path)/MacDetour"
@@ -13,6 +16,8 @@ swift_bin="$(cd app && swift build -c release --show-bin-path)/MacDetour"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$swift_bin" "$app/Contents/MacOS/MacDetour"
+# The app updates the service from these after it updates itself.
+cp target/release/detourd target/release/detourctl scripts/install.sh scripts/uninstall.sh "$app/Contents/Resources/"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

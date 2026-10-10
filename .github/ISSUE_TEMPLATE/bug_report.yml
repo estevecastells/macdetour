@@ -1,0 +1,29 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations: { required: true }
+  - type: input
+    id: system
+    attributes:
+      label: Mac model, macOS version and ISP
+      description: "`sysctl -n hw.model`, `sw_vers -productVersion`, and your internet provider"
+      placeholder: Mac17,9 / 26.6 / Movistar
+    validations: { required: true }
+  - type: textarea
+    id: status
+    attributes:
+      label: "`detourctl status` output"
+      description: Remove your server address before pasting.
+      render: text
+    validations: { required: true }
+  - type: textarea
+    id: log
+    attributes:
+      label: Relevant lines from /var/log/macdetour.log
+      description: Remove your server address before pasting.
+      render: text

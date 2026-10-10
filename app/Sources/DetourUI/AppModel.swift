@@ -1,3 +1,4 @@
+import AppKit
 import DetourKit
 import Foundation
 import Observation
@@ -19,6 +20,12 @@ public final class AppModel {
     private(set) var actionError: String?
     private(set) var busy = false
     private(set) var openAtLogin = false
+    /// The service bundled with this app is newer than the running one (after an app update).
+    private(set) var serviceUpdateAvailable = false
+    private(set) var installing = false
+    private var serviceChecked = false
+
+    public let updates = Updates()
 
     private let client = DaemonClient()
     private var pollTask: Task<Void, Never>?
@@ -32,6 +39,7 @@ public final class AppModel {
     public init() {
         configureLoginItemOnFirstLaunch()
         start()
+        updates.start()
     }
 
     /// A static model for screenshots: no daemon, no polling, no login item.
@@ -67,6 +75,7 @@ public final class AppModel {
         do {
             apply(try await client.status())
             setConnection(.connected)
+            await checkServiceVersion()
         } catch DaemonError.notRunning {
             apply(nil)
             setConnection(.missing)
@@ -112,6 +121,54 @@ public final class AppModel {
         }
     }
 
+    // MARK: Service updates
+
+    /// After the app updates itself, the service it bundles is newer than the one
+    /// running. Updating it needs the administrator password, so ask right away
+    /// only if the person started the update; otherwise offer a button.
+    private func checkServiceVersion() async {
+        guard !serviceChecked, !installing else { return }
+        serviceChecked = true
+        let prompt = UserDefaults.standard.bool(forKey: Updates.promptServiceUpdateKey)
+        UserDefaults.standard.removeObject(forKey: Updates.promptServiceUpdateKey)
+        guard case let .pong(running, _)? = try? await client.send(.ping), let runningVersion = Version(running),
+            runningVersion < Updates.currentVersion
+        else { return }
+        serviceUpdateAvailable = true
+        if prompt { updateService() }
+    }
+
+    /// Reinstall the service from the app bundle, keeping its configuration and
+    /// tunnel key, through the standard macOS administrator prompt.
+    func updateService() {
+        guard let resources = Bundle.main.resourceURL,
+            FileManager.default.fileExists(atPath: resources.appendingPathComponent("install.sh").path)
+        else {
+            actionError = "No se encuentra el instalador dentro de la app."
+            return
+        }
+        installing = true
+        let script = resources.appendingPathComponent("install.sh").path
+        let command = "/bin/bash \(shellQuote(script)) --upgrade --bin-dir \(shellQuote(resources.path))"
+        Task.detached {
+            var error: NSDictionary?
+            let source = "do shell script \"\(command.replacingOccurrences(of: "\"", with: "\\\""))\" with administrator privileges"
+            NSAppleScript(source: source)?.executeAndReturnError(&error)
+            let message = error?[NSAppleScript.errorMessage] as? String
+            await MainActor.run {
+                self.installing = false
+                self.actionError = message
+                if message == nil { self.serviceUpdateAvailable = false }
+            }
+            try? await Task.sleep(for: .seconds(1))
+            await self.refresh()
+        }
+    }
+
+    func openLog() {
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/var/log/macdetour.log"))
+    }
+
     // MARK: Open at login
 
     private static let loginItemConfiguredKey = "loginItemConfigured"
@@ -139,4 +196,8 @@ public final class AppModel {
         let state = SMAppService.mainApp.status
         openAtLogin = state == .enabled || state == .requiresApproval
     }
+}
+
+private func shellQuote(_ s: String) -> String {
+    "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }

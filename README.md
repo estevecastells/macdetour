@@ -1,8 +1,37 @@
-# MacDetour
+<div align="center">
 
-A menu bar switch that sends only the addresses LaLiga blocks in Spain through
-an SSH tunnel to your own server. Everything else keeps using your normal
-connection, untouched.
+<h1>MacDetour</h1>
+
+<p><strong>Free, open-source menu bar switch for macOS that sends only blocked addresses through your own server.</strong><br/>
+Made for LaLiga's IP blocks in Spain: everything else keeps using your normal connection, untouched.</p>
+
+<a href="https://github.com/estevecastells/macdetour/releases/latest/download/MacDetour-macos-arm64.zip"><img src="https://img.shields.io/badge/Download_for_Mac-Apple_Silicon-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Download MacDetour for Mac (Apple Silicon)" height="44"/></a>
+&nbsp;
+<a href="https://github.com/estevecastells/macdetour/releases/latest/download/macdetour-macos-arm64.tar.gz"><img src="https://img.shields.io/badge/Command_line-.tar.gz-24292F?style=for-the-badge&logo=gnubash&logoColor=white" alt="Download the command-line tools" height="44"/></a>
+
+<p>
+<a href="https://github.com/estevecastells/macdetour/releases/latest"><img src="https://img.shields.io/github/v/release/estevecastells/macdetour?label=latest&style=flat-square" alt="Latest release"/></a>
+<a href="https://github.com/estevecastells/macdetour/releases"><img src="https://img.shields.io/github/downloads/estevecastells/macdetour/total?style=flat-square" alt="Downloads"/></a>
+<img src="https://img.shields.io/badge/macOS-14%2B-555?style=flat-square&logo=apple" alt="macOS 14 or later"/>
+<a href="https://github.com/estevecastells/macdetour/actions/workflows/ci.yml"><img src="https://github.com/estevecastells/macdetour/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT license"/></a>
+</p>
+
+**Install in one line** (no security prompt; verifies checksums):
+
+</div>
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/estevecastells/macdetour/main/scripts/get.sh | bash -s -- <your-ssh-alias>
+```
+
+<div align="center"><sub>
+Needs a server you already reach with <code>ssh &lt;alias&gt;</code>. The installer asks for your password once, sets up the service,
+and authorizes a forwarding-only key on that server. The app alone does nothing without the service, so prefer the one-liner.
+Requires an Apple Silicon Mac on macOS 14+.
+</sub></div>
+
+<br/>
 
 <p align="center">
   <picture>
@@ -10,6 +39,8 @@ connection, untouched.
     <img src="docs/images/panel-light.png" alt="MacDetour menu bar panel: tunnel connected, 278 blocked addresses detoured" width="300">
   </picture>
 </p>
+
+---
 
 ## How it works
 
@@ -45,16 +76,26 @@ apps ──▶ macOS routing ──┬─ everything else ───────�
 
 ## Install
 
+**One line (recommended).** Downloads the latest release, verifies checksums, installs the
+service, authorizes the tunnel key on your server and opens the app:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/estevecastells/macdetour/main/scripts/get.sh | bash -s -- <your-ssh-alias>
+```
+
+**From source.**
+
 ```bash
 make setup SSH=<your-ssh-alias>      # e.g. make setup SSH=my-server
 ```
 
-`setup` builds everything, asks for `sudo` once to install the daemon, then uses
-your own SSH access to authorize a dedicated tunnel key on the server. That key
-is restricted to port forwarding (`restrict,port-forwarding,command="/usr/bin/false"`):
-it cannot open a shell or run commands. The daemon never uses your personal key.
+Both ask for `sudo` once to install the daemon, then use your own SSH access to authorize a
+dedicated tunnel key on the server. That key is restricted to port forwarding
+(`restrict,port-forwarding,command="/usr/bin/false"`): it cannot open a shell or run commands.
+The daemon never uses your personal key.
 
-The server needs `AllowTcpForwarding yes` (the OpenSSH default).
+The server needs `AllowTcpForwarding yes` (the OpenSSH default), and its host key must already be
+in your `~/.ssh/known_hosts` (connect once with `ssh <alias>`).
 
 ## Use
 
@@ -70,6 +111,14 @@ detourctl off
 without changing anything.
 
 Config: `/Library/Application Support/MacDetour/config.toml`. Log: `/var/log/macdetour.log`.
+
+## Updates
+
+The app checks GitHub for a new release every six hours (or on **Buscar actualizaciones**). It installs
+nothing unless the release's checksums carry a valid Ed25519 signature from the release key and the
+download matches them; then it replaces itself and relaunches, and offers to update the service, which asks
+for your password. Turn off **Instalar actualizaciones automáticamente** to only be notified. See
+[docs/RELEASING.md](docs/RELEASING.md).
 
 ## Uninstall
 
