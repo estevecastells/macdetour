@@ -53,7 +53,9 @@ pub fn spawn() -> Option<mpsc::Receiver<u16>> {
         let flags = libc::fcntl(owned.as_raw_fd(), libc::F_GETFL);
         libc::fcntl(owned.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK);
     }
-    let async_fd = AsyncFd::new(owned).ok()?;
+    // SAFETY: OwnedFd keeps the same descriptor open until AsyncFd drops it;
+    // we never replace or close the descriptor while it is registered.
+    let async_fd = unsafe { AsyncFd::register(owned) }.ok()?;
     let (tx, rx) = mpsc::channel(64);
     tokio::spawn(async move {
         let mut buf = [0u8; 2048];
